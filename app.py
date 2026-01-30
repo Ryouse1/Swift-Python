@@ -4,7 +4,7 @@ import io, sys, ast
 
 app = FastAPI()
 
-# CORS設定（iPadからアクセス可能）
+# CORS設定
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,10 +17,9 @@ FORBIDDEN_NODES = (
     ast.Import,
     ast.ImportFrom,
     ast.Global,
-    # ast.Exec は Python 3.13 では存在しないので削除
 )
 
-# 危険な関数呼び出し
+# 危険関数
 FORBIDDEN_CALLS = {"open", "eval", "exec", "__import__", "compile"}
 
 def is_safe_code(code: str):
@@ -43,18 +42,29 @@ def is_safe_code(code: str):
 
 @app.post("/run")
 async def run_python(request: Request):
-    code = (await request.body()).decode()
-    
+    data = await request.json()
+    code = data.get("code", "")
+    input_values = data.get("input_values", [])
+    input_iter = iter(input_values)
+
     safe, msg = is_safe_code(code)
     if not safe:
         return {"error": msg}
-    
+
     buffer = io.StringIO()
     stdout_backup = sys.stdout
     sys.stdout = buffer
 
+    # input() の安全な上書き
+    def safe_input(prompt=""):
+        try:
+            return next(input_iter)
+        except StopIteration:
+            return ""
+
     try:
-        exec(code)  # builtins制限なし
+        exec_globals = {"input": safe_input, "__builtins__": __builtins__}
+        exec(code, exec_globals)
         sys.stdout = stdout_backup
         return {"result": buffer.getvalue()}
     except Exception as e:
